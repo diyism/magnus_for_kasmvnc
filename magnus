@@ -3,14 +3,24 @@
 import json
 import os
 import codecs
+import cairo
 import setproctitle
 import sys
 from functools import lru_cache
+try:
+    from Xlib import X
+    from Xlib import display as xdisplay
+    from Xlib.ext import shape
+except ImportError:
+    X = None
+    xdisplay = None
+    shape = None
 import gi
 gi.require_version('Gtk', '3.0')
+gi.require_version('GdkX11', '3.0')
 gi.require_version('Keybinder', '3.0')
 from gi.repository import \
-    Gtk, Gdk, GLib, GdkPixbuf, Gio, Keybinder  # noqa: E402
+    Gtk, Gdk, GLib, GdkPixbuf, Gio, GdkX11, Keybinder  # noqa: E402
 
 __VERSION__ = "1.0.4"
 
@@ -35,6 +45,10 @@ class Main(object):
         self.refresh_interval = 250
         self.started_by_keypress = False
         self.force_refresh = False
+        self.hide_before_capture = False
+        self.click_through = False
+        self.debug_capture = False
+        self.xdisplay = None
 
     def handle_shutdown(self, app):
         if self.started_by_keypress:
@@ -60,12 +74,26 @@ class Main(object):
             print("  --force-refresh")
             print("    Refresh continually (according to refresh interval)")
             print("      even if the mouse has not moved")
+            print("  --hide-before-capture")
+            print("    Temporarily lower the Magnus window before taking")
+            print("      screenshots that would otherwise include it")
+            print("  --click-through")
+            print("    Make the Magnus window ignore mouse input")
             return 0
 
         if "--force-refresh" in args:
             # If this argument is supplied, refresh the view even if the mouse
             # has not moved. Useful if the screen content is video.
             self.force_refresh = True
+
+        if "--hide-before-capture" in args:
+            self.hide_before_capture = True
+
+        if "--click-through" in args:
+            self.click_through = True
+
+        if "--debug-capture" in args:
+            self.debug_capture = True
 
         # Override refresh rate on command line
         for arg in args:
@@ -164,6 +192,8 @@ class Main(object):
 
         # and, go
         self.w.show_all()
+        if self.click_through:
+            GLib.idle_add(self.make_click_through)
 
         self.width = 0
         self.height = 0
@@ -264,27 +294,87 @@ class Main(object):
                 return True
         self.last_x = x
         self.last_y = y
-        if (x > self.window_x and
-                x <= (self.window_x + self.width + self.decorations_width) and
-                y > self.window_y and
-                y <= (self.window_y + self.height + self.decorations_height)):
+        root = Gdk.get_default_root_window()
+        scaled_width = self.width // self.zoomlevel
+        scaled_height = self.height // self.zoomlevel
+        scaled_xoff = scaled_width // 2
+        scaled_yoff = scaled_height // 2
+        capture_x = x - scaled_xoff
+        capture_y = y - scaled_yoff
+        capture_hits_window = self.rects_intersect(
+            capture_x, capture_y, scaled_width, scaled_height,
+            self.window_x, self.window_y,
+            self.width + self.decorations_width,
+            self.height + self.decorations_height)
+        pointer_hits_window = self.rects_intersect(
+            x, y, 1, 1,
+            self.window_x, self.window_y,
+            self.width + self.decorations_width,
+            self.height + self.decorations_height)
+        if pointer_hits_window and not self.hide_before_capture:
             # pointer is over our window, so make it an empty pixbuf
             white = self.get_white_pixbuf(self.width, self.height)
             self.img.set_from_pixbuf(white)
         else:
-            root = Gdk.get_default_root_window()
-            scaled_width = self.width // self.zoomlevel
-            scaled_height = self.height // self.zoomlevel
-            scaled_xoff = scaled_width // 2
-            scaled_yoff = scaled_height // 2
-            screenshot = Gdk.pixbuf_get_from_window(
-                root, x - scaled_xoff,
-                y - scaled_yoff, scaled_width, scaled_height)
+            xwindow = None
+            if self.hide_before_capture and capture_hits_window:
+                magnus_window = self.w.get_window()
+                xwindow = self.get_managed_xwindow(magnus_window)
+                if self.debug_capture and xwindow:
+                    print("capture lowering X window 0x{:x}".format(
+                        xwindow.id), flush=True)
+                if xwindow:
+                    xwindow.configure(stack_mode=X.Below)
+                    self.xdisplay.sync()
+                elif magnus_window:
+                    magnus_window.lower()
+                Gdk.flush()
+                display.sync()
+            try:
+                screenshot = Gdk.pixbuf_get_from_window(
+                    root, capture_x, capture_y, scaled_width, scaled_height)
+            finally:
+                if self.hide_before_capture and capture_hits_window:
+                    if xwindow:
+                        xwindow.configure(stack_mode=X.Above)
+                        self.xdisplay.sync()
+                    elif magnus_window:
+                        magnus_window.raise_()
+                    Gdk.flush()
             scaled_pb = screenshot.scale_simple(
                 self.width, self.height,
                 GdkPixbuf.InterpType.NEAREST)
             self.img.set_from_pixbuf(scaled_pb)
         return True
+
+    def rects_intersect(self, ax, ay, aw, ah, bx, by, bw, bh):
+        return (ax < bx + bw and ax + aw > bx and
+                ay < by + bh and ay + ah > by)
+
+    def get_managed_xwindow(self, magnus_window):
+        if not magnus_window or not xdisplay:
+            return None
+        if not self.xdisplay:
+            self.xdisplay = xdisplay.Display()
+
+        client = self.xdisplay.create_resource_object(
+            "window", magnus_window.get_xid())
+        root = self.xdisplay.screen().root
+        parent = client.query_tree().parent
+        if parent and parent.id != root.id:
+            return parent
+        return client
+
+    def make_click_through(self):
+        window = self.w.get_window()
+        if window:
+            window.input_shape_combine_region(cairo.Region(), 0, 0)
+            xwindow = self.get_managed_xwindow(window)
+            if xwindow and shape:
+                xwindow.rectangles(
+                    shape.SO.Set, shape.SK.Input, 0, 0, 0, [])
+                self.xdisplay.sync()
+        return False
 
     def window_configure(self, window, ev):
         if not self.window_metrics_restored:
