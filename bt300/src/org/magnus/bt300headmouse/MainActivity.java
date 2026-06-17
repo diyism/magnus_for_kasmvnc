@@ -13,14 +13,8 @@ import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
-import android.graphics.Color;
 import android.view.Gravity;
 import android.view.View;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -59,8 +53,6 @@ public class MainActivity extends Activity implements SensorEventListener {
     private TextView status;
     private TextView poseView;
     private Button startButton;
-    private WebView webView;
-    private String currentWebUrl = "";
 
     @Override
     protected void onCreate(Bundle state) {
@@ -79,42 +71,8 @@ public class MainActivity extends Activity implements SensorEventListener {
 
         status = new TextView(this);
         status.setTextSize(18);
-        status.setText(sensor == null ? "No gyroscope sensor" : "WebView build ready: " + sensor.getName());
+        status.setText(sensor == null ? "No gyroscope sensor" : "Ready: " + sensor.getName());
         root.addView(status, fillWrap());
-
-        webView = new WebView(this);
-        webView.setBackgroundColor(Color.rgb(48, 48, 48));
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
-                status.setText("Loading " + url);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                status.setText("Loaded " + url);
-            }
-
-            @Override
-            public void onReceivedError(WebView view, int errorCode,
-                                        String description, String failingUrl) {
-                status.setText("WebView error " + errorCode + ": " + description);
-            }
-
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request,
-                                        WebResourceError error) {
-                status.setText("WebView error: " + error.getDescription());
-            }
-        });
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setLoadWithOverviewMode(true);
-        settings.setUseWideViewPort(true);
-        settings.setBuiltInZoomControls(true);
-        settings.setDisplayZoomControls(false);
-        root.addView(webView, fillWeight());
 
         Button topOpenButton = new Button(this);
         topOpenButton.setText("Open in Chrome");
@@ -158,39 +116,12 @@ public class MainActivity extends Activity implements SensorEventListener {
         root.addView(poseView, fillWrap());
 
         setContentView(root);
-        loadKasmVnc(hostEdit.getText().toString().trim());
     }
 
     private LinearLayout.LayoutParams fillWrap() {
         return new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-    }
-
-    private LinearLayout.LayoutParams fillWeight() {
-        return new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0f);
-    }
-
-    private void loadKasmVnc(String host) {
-        if (host == null || host.length() == 0 || webView == null) {
-            return;
-        }
-        String url = kasmUrl(host);
-        currentWebUrl = url;
-        status.setText("Opening " + url);
-        webView.setVisibility(View.VISIBLE);
-        webView.loadUrl(url);
-        new Handler().postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (currentWebUrl.length() > 0
-                        && status.getText().toString().startsWith("Loading ")) {
-                    status.setText("Still loading " + currentWebUrl
-                            + " - check WebView compatibility/network");
-                }
-            }
-        }, 8000);
     }
 
     private String kasmUrl(String host) {
@@ -233,7 +164,6 @@ public class MainActivity extends Activity implements SensorEventListener {
                     .putString("host", host)
                     .putInt("port", port)
                     .apply();
-            loadKasmVnc(host);
             targetAddress = InetAddress.getByName(host);
             targetPort = port;
             socket = new DatagramSocket();
@@ -280,11 +210,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-        }
+        super.onBackPressed();
     }
 
     @Override
