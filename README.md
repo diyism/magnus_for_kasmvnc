@@ -1,7 +1,7 @@
     In debian linux:
     $ ./kasm.sh
     $ ./kasm_resize.sh
-    $ ./magnus --to-display=:2 --zoomlevel=1.5
+    $ ./magnus --to-display=:2 --zoomlevel=2
 
     In bt300 glasses, open browser, open http://192.168.0.12:8445
 
