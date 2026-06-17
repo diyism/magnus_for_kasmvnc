@@ -2,3 +2,7 @@ __pycache__
 *.egg-info/
 build/
 dist/
+
+# BT-300 Android build outputs
+bt300/build/
+bt300/__pycache__/
