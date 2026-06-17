@@ -26,7 +26,7 @@ import java.util.Locale;
 public class MainActivity extends Activity implements SensorEventListener {
     private static final Charset UTF8 = Charset.forName("UTF-8");
     private static final String PREFS = "bt300-headmouse";
-    private static final String DEFAULT_HOST = "192.168.0.12";
+    private static final String DEFAULT_HOST = "192.168.15.102";
     private static final int DEFAULT_PORT = 39500;
     private static final long SEND_INTERVAL_NS = 20000000L;
 
@@ -40,6 +40,7 @@ public class MainActivity extends Activity implements SensorEventListener {
     private boolean running = false;
     private long lastSendNs = 0;
     private long sequence = 0;
+    private long sentCount = 0;
     private float lastGx = 0;
     private float lastGy = 0;
     private float lastGz = 0;
@@ -130,6 +131,7 @@ public class MainActivity extends Activity implements SensorEventListener {
             sender = new Handler(senderThread.getLooper());
             running = true;
             sequence = 0;
+            sentCount = 0;
             sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
             startButton.setText("Stop");
             status.setText("Sending to " + host + ":" + port);
@@ -180,7 +182,8 @@ public class MainActivity extends Activity implements SensorEventListener {
         final long seq = sequence++;
 
         poseView.setText(String.format(Locale.US,
-                "gyro gx %.3f  gy %.3f  gz %.3f rad/s", gx, gy, gz));
+                "gyro gx %.3f  gy %.3f  gz %.3f rad/s  sent %d",
+                gx, gy, gz, sentCount));
         sendGyro(seq, gx, gy, gz);
     }
 
@@ -199,7 +202,24 @@ public class MainActivity extends Activity implements SensorEventListener {
                     DatagramPacket packet = new DatagramPacket(
                             bytes, bytes.length, targetAddress, targetPort);
                     socket.send(packet);
-                } catch (Exception ignored) {
+                    sentCount++;
+                    if (seq % 20 == 0) {
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                status.setText("Sending to "
+                                        + targetAddress.getHostAddress() + ":"
+                                        + targetPort + " sent " + sentCount);
+                            }
+                        });
+                    }
+                } catch (final Exception e) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            status.setText("Send failed: " + e.getMessage());
+                        }
+                    });
                 }
             }
         });

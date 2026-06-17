@@ -32,20 +32,35 @@ On Debian, listening on all interfaces:
 
 ```bash
 cd bt300
-DISPLAY=:0 ./receiver.py --host 0.0.0.0 --port 39500
+DISPLAY=:0 ./receiver.py --host 0.0.0.0 --port 39500 --heartbeat --verbose
 ```
 
+If no packets arrive, test the receiver locally from another shell:
+
+```bash
+printf '{"gx":0.2,"gy":0.2,"gz":0.0}\n' | nc -u -w1 127.0.0.1 39500
+```
+
+The Android app must send to one of the local IPs printed by the receiver, not
+to `127.0.0.1`.
+
 The default mode maps gyroscope angular velocity to relative mouse movement.
-Small sensor drift is ignored with a deadzone; the default is `0.03 rad/s`.
-The receiver defaults to `--x-axis gz --y-axis gx`, but BT-300 axis mapping may
-need adjustment depending on how the device reports its gyroscope axes.
+For the tested BT-300 axis mapping:
+
+- head left: `gy > +0.1`
+- head right: `gy < -0.1`
+- head up: `gx > +0.05`
+- head down: `gx < -0.05`
+
+The receiver therefore defaults to `--x-axis gy --y-axis gx --invert-y`,
+with `--x-deadzone 0.10` and `--y-deadzone 0.05`.
 
 Useful receiver options:
 
 ```bash
 DISPLAY=:0 ./receiver.py --yaw-gain 120 --pitch-gain 120
-DISPLAY=:0 ./receiver.py --x-axis gy --y-axis gx
-DISPLAY=:0 ./receiver.py --x-axis gz --y-axis gx --invert-y
+DISPLAY=:0 ./receiver.py --x-deadzone 0.12 --y-deadzone 0.06
+DISPLAY=:0 ./receiver.py --no-invert-y
 DISPLAY=:0 ./receiver.py --deadzone 0.05
 DISPLAY=:0 ./receiver.py --mode scroll --scroll-threshold 8
 ```
