@@ -28,24 +28,32 @@ def axis_value(pose, name):
     return float(pose[name])
 
 
+def apply_deadzone(value, deadzone):
+    if abs(value) < deadzone:
+        return 0.0
+    return value
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=39500)
-    parser.add_argument("--mode", choices=["absolute", "relative", "scroll"],
-                        default="absolute")
-    parser.add_argument("--x-axis", choices=["yaw", "pitch", "roll", "turn", "tilt"],
-                        default="turn",
-                        help="incoming pose axis used for horizontal movement")
-    parser.add_argument("--y-axis", choices=["yaw", "pitch", "roll", "turn", "tilt"],
-                        default="tilt",
-                        help="incoming pose axis used for vertical movement")
+    parser.add_argument("--mode", choices=["gyro", "relative", "scroll"],
+                        default="gyro")
+    parser.add_argument("--x-axis", choices=["gx", "gy", "gz"],
+                        default="gz",
+                        help="incoming gyro axis used for horizontal movement")
+    parser.add_argument("--y-axis", choices=["gx", "gy", "gz"],
+                        default="gx",
+                        help="incoming gyro axis used for vertical movement")
     parser.add_argument("--invert-x", action="store_true")
     parser.add_argument("--invert-y", action="store_true")
-    parser.add_argument("--yaw-gain", type=float, default=38.0,
-                        help="pixels per degree in absolute/relative modes")
-    parser.add_argument("--pitch-gain", type=float, default=30.0,
-                        help="pixels per degree in absolute/relative modes")
+    parser.add_argument("--yaw-gain", type=float, default=120.0,
+                        help="pixels per rad/s for horizontal gyro movement")
+    parser.add_argument("--pitch-gain", type=float, default=120.0,
+                        help="pixels per rad/s for vertical gyro movement")
+    parser.add_argument("--deadzone", type=float, default=0.03,
+                        help="ignore angular velocity below this rad/s")
     parser.add_argument("--scroll-threshold", type=float, default=8.0,
                         help="pitch degrees needed per scroll tick")
     parser.add_argument("--rate", type=float, default=60.0,
@@ -84,10 +92,15 @@ def main():
             continue
         last_update = now
 
-        if args.mode == "absolute":
-            x = int(clamp(center_x + x_axis * args.yaw_gain, 0, screen_w - 1))
-            y = int(clamp(center_y + y_axis * args.pitch_gain, 0, screen_h - 1))
-            subprocess.call(["xdotool", "mousemove", str(x), str(y)])
+        x_axis = apply_deadzone(x_axis, args.deadzone)
+        y_axis = apply_deadzone(y_axis, args.deadzone)
+
+        if args.mode == "gyro":
+            dx = int(x_axis * args.yaw_gain)
+            dy = int(y_axis * args.pitch_gain)
+            if dx or dy:
+                subprocess.call(["xdotool", "mousemove_relative",
+                                 "--", str(dx), str(dy)])
         elif args.mode == "relative":
             if last_yaw is not None and last_pitch is not None:
                 dx = int((x_axis - last_yaw) * args.yaw_gain)

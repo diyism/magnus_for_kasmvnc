@@ -40,16 +40,9 @@ public class MainActivity extends Activity implements SensorEventListener {
     private boolean running = false;
     private long lastSendNs = 0;
     private long sequence = 0;
-    private float centerYaw = 0;
-    private float centerPitch = 0;
-    private float centerRoll = 0;
-    private final float[] centerForward = new float[] {0, 0, -1};
-    private final float[] lastForward = new float[] {0, 0, -1};
-    private float lastYaw = 0;
-    private float lastPitch = 0;
-    private float lastRoll = 0;
-    private float lastTurn = 0;
-    private float lastTilt = 0;
+    private float lastGx = 0;
+    private float lastGy = 0;
+    private float lastGz = 0;
 
     private EditText hostEdit;
     private EditText portEdit;
@@ -61,10 +54,7 @@ public class MainActivity extends Activity implements SensorEventListener {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-        sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
-        if (sensor == null) {
-            sensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
-        }
+        sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
         buildUi();
     }
 
@@ -77,7 +67,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
         status = new TextView(this);
         status.setTextSize(18);
-        status.setText(sensor == null ? "No rotation vector sensor" : "Ready: " + sensor.getName());
+        status.setText(sensor == null ? "No gyroscope sensor" : "Ready: " + sensor.getName());
         root.addView(status, fillWrap());
 
         hostEdit = new EditText(this);
@@ -106,23 +96,9 @@ public class MainActivity extends Activity implements SensorEventListener {
         });
         root.addView(startButton, fillWrap());
 
-        Button recenter = new Button(this);
-        recenter.setText("Recenter");
-        recenter.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                centerYaw = lastYaw;
-                centerPitch = lastPitch;
-                centerRoll = lastRoll;
-                copyForward(lastForward, centerForward);
-                sequence = 0;
-            }
-        });
-        root.addView(recenter, fillWrap());
-
         poseView = new TextView(this);
         poseView.setTextSize(16);
-        poseView.setText("turn 0.0  tilt 0.0  raw yaw 0.0");
+        poseView.setText("gyro gx 0.000  gy 0.000  gz 0.000 rad/s");
         root.addView(poseView, fillWrap());
 
         setContentView(root);
@@ -136,7 +112,7 @@ public class MainActivity extends Activity implements SensorEventListener {
 
     private void startSending() {
         if (sensor == null) {
-            status.setText("No usable rotation vector sensor");
+            status.setText("No usable gyroscope sensor");
             return;
         }
         try {
@@ -154,10 +130,6 @@ public class MainActivity extends Activity implements SensorEventListener {
             sender = new Handler(senderThread.getLooper());
             running = true;
             sequence = 0;
-            centerYaw = lastYaw;
-            centerPitch = lastPitch;
-            centerRoll = lastRoll;
-            copyForward(lastForward, centerForward);
             sensorManager.registerListener(this, sensor, SensorManager.SENSOR_DELAY_GAME);
             startButton.setText("Stop");
             status.setText("Sending to " + host + ":" + port);
@@ -179,7 +151,7 @@ public class MainActivity extends Activity implements SensorEventListener {
             socket = null;
         }
         startButton.setText("Start");
-        status.setText(sensor == null ? "No rotation vector sensor" : "Stopped");
+        status.setText(sensor == null ? "No gyroscope sensor" : "Stopped");
     }
 
     @Override
@@ -198,75 +170,21 @@ public class MainActivity extends Activity implements SensorEventListener {
         }
         lastSendNs = event.timestamp;
 
-        float[] matrix = new float[9];
-        float[] orientation = new float[3];
-        SensorManager.getRotationMatrixFromVector(matrix, event.values);
-        SensorManager.getOrientation(matrix, orientation);
+        lastGx = event.values[0];
+        lastGy = event.values[1];
+        lastGz = event.values[2];
 
-        lastYaw = (float) Math.toDegrees(orientation[0]);
-        lastPitch = (float) Math.toDegrees(orientation[1]);
-        lastRoll = (float) Math.toDegrees(orientation[2]);
-        float[] forward = forwardFromMatrix(matrix);
-        copyForward(forward, lastForward);
-        lastTurn = signedHorizontalAngle(centerForward, forward);
-        lastTilt = verticalAngle(forward) - verticalAngle(centerForward);
-
-        final float yaw = angleDelta(lastYaw, centerYaw);
-        final float pitch = lastPitch - centerPitch;
-        final float roll = lastRoll - centerRoll;
-        final float turn = lastTurn;
-        final float tilt = lastTilt;
+        final float gx = lastGx;
+        final float gy = lastGy;
+        final float gz = lastGz;
         final long seq = sequence++;
 
         poseView.setText(String.format(Locale.US,
-                "turn %.1f  tilt %.1f  raw yaw %.1f pitch %.1f roll %.1f",
-                turn, tilt, yaw, pitch, roll));
-        sendPose(seq, yaw, pitch, roll, turn, tilt);
+                "gyro gx %.3f  gy %.3f  gz %.3f rad/s", gx, gy, gz));
+        sendGyro(seq, gx, gy, gz);
     }
 
-    private float[] forwardFromMatrix(float[] matrix) {
-        return new float[] {-matrix[2], -matrix[5], -matrix[8]};
-    }
-
-    private void copyForward(float[] from, float[] to) {
-        to[0] = from[0];
-        to[1] = from[1];
-        to[2] = from[2];
-    }
-
-    private float signedHorizontalAngle(float[] center, float[] current) {
-        float centerX = center[0];
-        float centerZ = center[2];
-        float currentX = current[0];
-        float currentZ = current[2];
-        float centerLen = (float) Math.sqrt(centerX * centerX + centerZ * centerZ);
-        float currentLen = (float) Math.sqrt(currentX * currentX + currentZ * currentZ);
-        if (centerLen < 0.0001f || currentLen < 0.0001f) {
-            return 0;
-        }
-        centerX /= centerLen;
-        centerZ /= centerLen;
-        currentX /= currentLen;
-        currentZ /= currentLen;
-        float crossY = centerZ * currentX - centerX * currentZ;
-        float dot = centerX * currentX + centerZ * currentZ;
-        return (float) Math.toDegrees(Math.atan2(crossY, dot));
-    }
-
-    private float verticalAngle(float[] forward) {
-        float horizontal = (float) Math.sqrt(forward[0] * forward[0] + forward[2] * forward[2]);
-        return (float) Math.toDegrees(Math.atan2(forward[1], horizontal));
-    }
-
-    private float angleDelta(float value, float center) {
-        float delta = value - center;
-        while (delta > 180) delta -= 360;
-        while (delta < -180) delta += 360;
-        return delta;
-    }
-
-    private void sendPose(final long seq, final float yaw, final float pitch,
-                          final float roll, final float turn, final float tilt) {
+    private void sendGyro(final long seq, final float gx, final float gy, final float gz) {
         if (sender == null || socket == null || targetAddress == null) {
             return;
         }
@@ -275,9 +193,8 @@ public class MainActivity extends Activity implements SensorEventListener {
             public void run() {
                 try {
                     String payload = String.format(Locale.US,
-                            "{\"seq\":%d,\"yaw\":%.4f,\"pitch\":%.4f,\"roll\":%.4f,"
-                                    + "\"turn\":%.4f,\"tilt\":%.4f}",
-                            seq, yaw, pitch, roll, turn, tilt);
+                            "{\"seq\":%d,\"gx\":%.6f,\"gy\":%.6f,\"gz\":%.6f}",
+                            seq, gx, gy, gz);
                     byte[] bytes = payload.getBytes(UTF8);
                     DatagramPacket packet = new DatagramPacket(
                             bytes, bytes.length, targetAddress, targetPort);
